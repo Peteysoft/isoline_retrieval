@@ -1,0 +1,146 @@
+#parameters:
+#YEAR = 1999
+YEAR = %
+THETA = 500
+VMR_THRESH = 2.5
+COLLOC_RADIUS = 100
+
+WC=15
+WC_ALL=25
+VAR0=100
+NSAMP=200
+NSAMP_ALL=500
+
+#do a dummy convert:
+#DUMMY=-u
+DUMMY=-n		#convert, but do not overwrite existing files...
+
+#use PMD or not?
+#PMD_FLAG=-p
+
+#directories:
+COORD_PATH = data/coords/
+DATA_PATH = data/fourband/binary/traj/
+BIN_PATH = /home/home/pmills/my_software/isoret/
+BIN_PATH2 = /home/home/pmills/bin/
+
+#the name of this makefile
+THIS_FILE = $(lastword $(MAKEFILE_LIST))
+
+#file names:
+#velocity fields:
+VECFILE_N = vfield_N_$(YEAR)_$(THETA)K.ds
+VECFILE_S = vfield_S_$(YEAR)_$(THETA)K.ds
+
+#output training data:
+FBASE = $(THETA)K$(YEAR)
+TRAIN_BASE = o3train$(FBASE)
+#contains desired spectra:
+SPEC_FILE = ret_spec.txt
+
+#with all the years:
+TRAIN_ALL = o3train_all
+
+#for performing the collocations:
+COLLOC_FILE = o3colloc$(FBASE).txt
+SONDE_FILE = o3sonde$(FBASE).txt
+SONDES_ALL = o3soundings\ $(THETA).K.txt
+INDEX_BASE = gome_index$(YEAR)
+#divides the globe into bins:
+BINFILE = bins20deg.txt
+
+NEXT_YEAR=$(shell ./increment.sh $(YEAR))
+LAST_YEAR=$(shell ./decrement.sh $(YEAR))
+
+COORDLIST_BASE=gomecoordfiles
+
+COORDLIST_THIS=$(COORDLIST_BASE)$(YEAR).txt
+COORDLIST_NEXT=$(COORDLIST_BASE)$(NEXT_YEAR).txt
+COORDLIST_LAST=$(COORDLIST_BASE)$(LAST_YEAR).txt
+
+FLIST_OVERLAP=75
+
+YEARLIST = 1998 1999 2000 2001 2002
+
+VPATH = $(BIN_PATH) $(COORD_PATH)
+
+test_all: $(TRAIN_ALL).cls $(TRAIN_ALL).vec
+	$(BIN_PATH2)test_classify_b -n -s $(NSAMP_ALL) -v $(VAR0) -w $(WC_ALL) \
+		o3train_all
+
+$(TRAIN_ALL).cls: $(TRAIN_ALL).txt $(TRAIN_ALL).vec $(THIS_FILE)
+	$(BIN_PATH)o3_class $(TRAIN_ALL) $(VMR_THRESH)
+
+#list of training data for all years:
+TRAIN_LIST_BASE=$(foreach YR, $(YEARLIST), o3train$(THETA)K$(YR) ) 
+TRAIN_LIST_TXT=$(addsuffix .txt, $(TRAIN_LIST_BASE)) 
+TRAIN_LIST_VEC=$(addsuffix .vec, $(TRAIN_LIST_BASE)) 
+
+$(TRAIN_ALL).txt: $(TRAIN_LIST_TXT)
+	cat $(foreach YR, $(YEARLIST), o3train$(THETA)K$(YR).txt ) > $(TRAIN_ALL).txt
+
+HEADER_FILE=header.dat
+$(TRAIN_ALL).vec: $(TRAIN_LIST_VEC)
+	$(BIN_PATH2)/strip_vec_header $(TRAIN_BASE).vec $(HEADER_FILE) > dum.dat
+	$(foreach TR_BS, $(TRAIN_LIST_BASE), \
+		$(BIN_PATH2)/strip_vec_header $(TR_BS).vec > $(TR_BS).dat
+	cat $(HEADER_FILE) $(foreach TR_BS, $(TRAIN_LIST_BASE) $(TR_BS).dat) > $(TRAIN_ALL).vec
+
+#test the training data:
+test: $(TRAIN_BASE).vec $(TRAIN_BASE).cls
+	$(BIN_PATH2)test_classify_b -n -s $(NSAMP) -v $(VAR0) -w $(WC) $(TRAIN_BASE)
+
+#create the classes:
+$(TRAIN_BASE).cls: $(TRAIN_BASE).txt $(TRAIN_BASE).vec o3_class $(THIS_FILE)
+	$(BIN_PATH)o3_class $(TRAIN_BASE) $(VMR_THRESH)
+
+#extract the gome spectra and collocated radiosonde measurements:
+#$(TRAIN_LIST_TXT) $(TRAIN_LIST_VEC): $(TRAIN_BASE).vec $(TRAIN_BASE).txt: $(COLLOC_FILE) $(SPEC_FILE) $(DATA_PATH)$(YEAR) \
+$(TRAIN_BASE).vec $(TRAIN_BASE).txt: $(COLLOC_FILE) $(SPEC_FILE) $(DATA_PATH)$(YEAR) \
+		extract_gome_colloc
+	$(BIN_PATH)extract_gome_colloc $(PMD_FLAG) -r -b $(DATA_PATH) $(COLLOC_FILE) \
+		$(SPEC_FILE) $(TRAIN_BASE)
+
+#convert the files with the collocated measurements:
+$(DATA_PATH)$(YEAR): $(COLLOC_FILE) convert_gome_colloc.pl
+	./convert_gome_colloc.pl $(DUMMY) $(COLLOC_FILE) $(DATA_PATH)
+	touch $(DATA_PATH)$(YEAR)
+
+#perform the collocations:
+$(COLLOC_FILE): $(INDEX_BASE).dat $(VECFILE_N) $(VECFILE_S) $(SONDE_FILE) gome_colloc2
+	$(BIN_PATH)gome_colloc2 -o $(VECFILE_N) -s $(VECFILE_S) -r $(COLLOC_RADIUS) $(INDEX_BASE).dat $(SONDE_FILE) $(COLLOC_FILE)
+
+#extract the ozone soundings from the full list:
+$(SONDE_FILE): $(SONDES_ALL)
+	grep $(YEAR)\/..\/.. $(SONDES_ALL) > $(SONDE_FILE)
+
+#index the gome files:
+$(INDEX_BASE).dat: $(BINFILE) $(INDEX_BASE).init index_gome 
+	$(BIN_PATH)index_gome -b $(COORD_PATH) -f $(BINFILE) $(INDEX_BASE).init $(INDEX_BASE).dat
+
+#create the index initialization file: (farm out to shell file--make can't do arithmetic)
+$(INDEX_BASE).init: $(COORDLIST_THIS) $(COORDLIST_NEXT) $(COORDLIST_LAST)
+	tail -n $(FLIST_OVERLAP) $(COORDLIST_NEXT) > tlist_next.txt
+	head -n $(FLIST_OVERLAP) $(COORDLIST_LAST) > tlist_last.txt
+	cat tlist_last.txt $(COORDLIST_THIS) tlist_next.txt > $(INDEX_BASE).init
+
+$(COORDLIST_THIS): $(COORD_PATH)$(YEAR)
+	ls $(COORD_PATH)$(YEAR) > flist.txt
+	sed 's/coords/$(YEAR)\/coords/' flist.txt > $(COORDLIST_THIS)
+
+$(COORDLIST_NEXT): $(COORD_PATH)$(NEXT_YEAR)
+	ls $(COORD_PATH)$(NEXT_YEAR) > flist.txt
+	sed 's/coords/$(NEXT_YEAR)\/coords/' flist.txt > $(COORDLIST_NEXT)
+
+$(COORDLIST_LAST): $(COORD_PATH)$(LAST_YEAR)
+	ls $(COORD_PATH)$(LAST_YEAR) > flist.txt
+	sed 's/coords/$(LAST_YEAR)\/coords/' flist.txt > $(COORDLIST_LAST)
+
+index_gome gome_colloc2 convert_gome_colloc extract_gome_colloc o3_train:
+	make -C $(BIN_PATH)
+
+#convert the files containing gome pixel coordinates:
+#$(COORD_PATH)$(YEAR): convert_gome
+#	convert_gome_1yr.sh $(YEAR)
+#	touch $(COORD_PATH)$(YEAR)
+

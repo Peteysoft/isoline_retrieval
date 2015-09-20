@@ -1,0 +1,20 @@
+COMMAND LINE OPTIONS
+
+-0 use 0-360 degree longitude range
+-b list of bands
+-B page size for velocity data in bytes
+-d max time separation
+-D use default spectrum
+-f ASCII file listing global bins
+-h time-step
+-n number of data files to keep in RAM
+-N N-hemisphere velocity field
+-p base-path
+-P use/retrieve PMD data
+-r critical/max distance
+-R "rawread"
+-s byte-swap file
+-S S-hemisphere velocity field
+-t number of time-steps
+-v verbose mode
+
